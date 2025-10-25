@@ -1,0 +1,265 @@
+---
+title: "A2"
+output: html_document
+date: "2025-10-25"
+---
+
+
+```{r}
+# ---------------------------------------------------------------------------
+# DATA5002 - Exploratory Data Analysis (EDA) of Online Retail Data
+#
+# This script performs data cleaning and descriptive analysis
+# to understand sales patterns, top products, and customer behavior.
+# ---------------------------------------------------------------------------
+
+## 1. Setup - Install and Load Required Libraries
+# ---------------------------------------------------------------------------
+# Install packages if you don't have them (remove the '#' to run)
+# install.packages("dplyr")
+# install.packages("readr")
+# install.packages("lubridate")
+# install.packages("ggplot2")
+# install.packages("tidyr")
+# install.packages("scales")
+
+# Load libraries
+library(dplyr)       # For data manipulation
+library(readr)       # For fast CSV reading
+library(lubridate)   # For date-time manipulation
+library(ggplot2)     # For visualization
+library(tidyr)       # For drop_na
+library(scales)      # For formatting plot axes (e.g., dollar)
+
+# Set ggplot theme for all plots
+theme_set(theme_minimal())
+
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+## 2. Data Loading
+# ---------------------------------------------------------------------------
+# Define the file path
+file_path <- "online_retail_II.csv"
+
+# Load the dataset
+message("Loading dataset...")
+tryCatch({
+  retail_data <- read_csv(
+    file_path,
+    col_types = cols(
+      Invoice = col_character(),
+      `Customer ID` = col_character(),
+      InvoiceDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")
+    )
+  )
+  message("Dataset loaded successfully.")
+}, error = function(e) {
+  message(paste("Error loading file:", e$message))
+})
+
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+## 3. Data Cleaning & Preprocessing
+# ---------------------------------------------------------------------------
+message("Starting data cleaning...")
+
+retail_clean <- retail_data %>%
+  
+  # 1. Filter for 'United Kingdom' transactions for a consistent cohort
+  filter(Country == "United Kingdom") %>%
+  
+  # 2. Remove cancelled/returned orders (Invoice starts with 'C')
+  filter(!grepl("^C", Invoice, ignore.case = TRUE)) %>%
+  
+  # 3. Remove rows with negative/zero quantity or price
+  filter(Quantity > 0, Price > 0) %>%
+  
+  # 4. Handle missing values
+  # For this analysis, we need both Description and Customer ID
+  drop_na(Description) %>%
+  drop_na(`Customer ID`) %>%
+  
+  # 5. Clean item descriptions
+  mutate(Description = toupper(trimws(Description))) %>%
+  
+  # 6. Remove non-product and adjustment entries
+  filter(
+    !StockCode %in% c("POST", "M", "D", "BANK CHARGES", "S", "AMAZONFEE", "CRUK", "DOT"),
+    !grepl("POSTAGE", Description),
+    !grepl("MANUAL", Description),
+    !grepl("DISCOUNT", Description)
+  )
+
+message(paste("Cleaning complete. Original rows:", nrow(retail_data),
+              "| Cleaned rows:", nrow(retail_clean)))
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+## 4. Feature Engineering (Adding Analytical Columns)
+# ---------------------------------------------------------------------------
+message("Adding new features (TotalSale, date components)...")
+
+retail_analysis <- retail_clean %>%
+  
+  # 1. Calculate Total Sale for each line item
+  mutate(TotalSale = Quantity * Price) %>%
+  
+  # 2. Extract date-time components for time-series analysis
+  mutate(
+    InvoiceMonth = floor_date(InvoiceDate, "month"),
+    InvoiceDay = floor_date(InvoiceDate, "day"),
+    InvoiceHour = hour(InvoiceDate)
+  )
+
+# Glimpse the final analysis-ready data
+# print(glimpse(retail_analysis))
+
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+## 5. Data Analysis (Part 1): Product & Sales Analysis
+# ---------------------------------------------------------------------------
+message("Analyzing top products and sales trends...")
+
+# --- Analysis 1: Top 10 Products by Revenue ---
+top_10_revenue <- retail_analysis %>%
+  group_by(Description) %>%
+  summarize(TotalRevenue = sum(TotalSale)) %>%
+  arrange(desc(TotalRevenue)) %>%
+  head(10)
+
+message("\n--- Top 10 Products by Revenue ---")
+print(top_10_revenue)
+
+# --- Analysis 2: Top 10 Products by Quantity Sold ---
+top_10_quantity <- retail_analysis %>%
+  group_by(Description) %>%
+  summarize(TotalQuantity = sum(Quantity)) %>%
+  arrange(desc(TotalQuantity)) %>%
+  head(10)
+
+message("\n--- Top 10 Products by Quantity Sold ---")
+print(top_10_quantity)
+
+
+# --- Analysis 3: Monthly Revenue Trend ---
+monthly_revenue <- retail_analysis %>%
+  group_by(InvoiceMonth) %>%
+  summarize(MonthlyRevenue = sum(TotalSale))
+
+message("\n--- Monthly Revenue Summary ---")
+print(monthly_revenue)
+
+# Visualize Monthly Revenue
+plot_monthly <- ggplot(monthly_revenue, aes(x = InvoiceMonth, y = MonthlyRevenue)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  labs(
+    title = "Total Monthly Revenue (UK)",
+    x = "Month",
+    y = "Total Revenue"
+  ) +
+  scale_y_continuous(labels = dollar_format()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(plot_monthly)
+# Save the plot
+ggsave("monthly_revenue_plot.png", plot_monthly, width = 10, height = 6)
+message("\nSaved 'monthly_revenue_plot.png'")
+
+
+# --- Analysis 4: Sales by Hour of Day ---
+hourly_sales <- retail_analysis %>%
+  group_by(InvoiceHour) %>%
+  summarize(TotalRevenue = sum(TotalSale))
+
+message("\n--- Sales by Hour of Day ---")
+print(hourly_sales)
+
+# Visualize Hourly Sales
+plot_hourly <- ggplot(hourly_sales, aes(x = factor(InvoiceHour), y = TotalRevenue)) +
+  geom_col(fill = "coral") +
+  labs(
+    title = "Total Revenue by Hour of Day (UK)",
+    x = "Hour of Day (0-23)",
+    y = "Total Revenue"
+  ) +
+  scale_y_continuous(labels = dollar_format())
+
+print(plot_hourly)
+# Save the plot
+ggsave("hourly_sales_plot.png", plot_hourly, width = 10, height = 6)
+message("Saved 'hourly_sales_plot.png'")
+
+```
+
+```{r}
+# ---------------------------------------------------------------------------
+## 6. Data Analysis (Part 2): Customer Analysis (RFM)
+# ---------------------------------------------------------------------------
+message("\nPerforming RFM (Recency, Frequency, Monetary) analysis...")
+
+# RFM is a standard way to segment customers:
+# - Recency: How recently did they buy? (Fewer days ago is better)
+# - Frequency: How often do they buy? (More invoices is better)
+# - Monetary: How much do they spend? (More revenue is better)
+
+# Define the "snapshot date" (today) as 1 day after the last transaction
+snapshot_date <- max(retail_analysis$InvoiceDate) + days(1)
+
+# Calculate RFM metrics for each customer
+rfm_summary <- retail_analysis %>%
+  group_by(`Customer ID`) %>%
+  summarize(
+    Recency = as.numeric(snapshot_date - max(InvoiceDate), units = "days"),
+    Frequency = n_distinct(Invoice),
+    Monetary = sum(TotalSale)
+  ) %>%
+  arrange(desc(Monetary)) # Sort by highest spenders
+
+message("\n--- Top 10 Customers (RFM Summary) ---")
+print(head(rfm_summary, 10))
+
+# --- Visualize RFM Distributions ---
+# This helps understand the customer base
+
+# Monetary Distribution (use log scale due to skew)
+plot_monetary <- ggplot(rfm_summary, aes(x = Monetary)) +
+  geom_histogram(bins = 30, fill = "seagreen") +
+  scale_x_log10(labels = dollar_format()) +
+  labs(title = "Customer Monetary Value Distribution (Log Scale)", x = "Total Spend")
+print(plot_monetary)
+# Save plot
+ggsave("rfm_monetary_plot.png", plot_monetary, width = 8, height = 5)
+
+# Recency Distribution
+plot_recency <- ggplot(rfm_summary, aes(x = Recency)) +
+  geom_histogram(bins = 30, fill = "skyblue") +
+  labs(title = "Customer Recency Distribution", x = "Days Since Last Purchase")
+print(plot_recency)
+# Save plot
+ggsave("rfm_recency_plot.png", plot_recency, width = 8, height = 5)
+
+# Frequency Distribution (use log scale due to skew)
+plot_frequency <- ggplot(rfm_summary, aes(x = Frequency)) +
+  geom_histogram(bins = 30, fill = "purple") +
+  scale_x_log10() +
+  labs(title = "Customer Frequency Distribution (Log Scale)", x = "Number of Invoices")
+print(plot_frequency)
+# Save plot
+ggsave("rfm_frequency_plot.png", plot_frequency, width = 8, height = 5)
+
+message("Saved RFM distribution plots.")
+message("\nAnalysis script finished.")
+```
+
+
+
+
+
