@@ -1,0 +1,3 @@
+"0","retail %>%"
+"0","  filter(str_starts(Invoice, ""C"")) %>%"
+"0","  head()"

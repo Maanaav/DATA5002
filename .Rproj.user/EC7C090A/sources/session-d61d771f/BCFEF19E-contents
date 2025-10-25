@@ -1,0 +1,57 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+```{r}
+retail <- read.csv("data/online_retail_II.csv")
+head(retail)
+```
+
+```{r}
+summary(retail)
+```
+
+```{r}
+# convert Invoice to date
+retail <- retail %>%
+  mutate(InvoiceDate = parse_date_time(InvoiceDate, orders = c("ymd HMS")))
+
+
+# drop rows with missing Customer ID
+retail <- retail %>%
+  filter(!is.na(`Customer.ID`))
+
+# sort chronologically
+retail <- retail %>%
+  arrange(InvoiceDate)
+
+# compute Total
+retail <- retail %>%
+  mutate(Total = Quantity * Price)
+```
+
+```{r}
+head(retail)
+```
+```{r}
+retail %>%
+  filter(str_starts(Invoice, "C")) %>%
+  head()
+```
+
+```{r}
+# Every credit invoice (Invoice starting with "C") already has negative quantities
+tab <- retail %>%
+  mutate(is_c = str_starts(Invoice, "C"),
+         qty_neg = Quantity < 0) %>%
+  count(is_c, qty_neg)
+
+tab
+```
