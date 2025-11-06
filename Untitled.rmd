@@ -23,35 +23,94 @@ summary(retail)
 retail <- retail %>%
   mutate(InvoiceDate = parse_date_time(InvoiceDate, orders = c("ymd HMS")))
 
-
-# drop rows with missing Customer ID
+# making sure Invoice and StockCode are char
 retail <- retail %>%
-  filter(!is.na(`Customer.ID`))
+  mutate(
+    Invoice = as.character(Invoice),
+    StockCode = as.character(StockCode)
+  )
 
 # sort chronologically
 retail <- retail %>%
   arrange(InvoiceDate)
-
-# compute Total
-retail <- retail %>%
-  mutate(Total = Quantity * Price)
 ```
 
-```{r}
-head(retail)
-```
 ```{r}
 retail %>%
   filter(str_starts(Invoice, "C")) %>%
   head()
-```
 
-```{r}
-# Every credit invoice (Invoice starting with "C") already has negative quantities
+# every invoice starting with "C" already has negative values
 tab <- retail %>%
   mutate(is_c = str_starts(Invoice, "C"),
          qty_neg = Quantity < 0) %>%
   count(is_c, qty_neg)
 
 tab
+
+# keep only sales (no returns)
+sum(str_starts(retail$Invoice, "C"))
+
+retail <- retail %>%
+  filter(!str_starts(Invoice, "C"), Quantity > 0, Price > 0)
 ```
+
+```{r}
+sort(unique(retail$Country))
+
+# filter for 'United Kingdom' transactions only
+retail <- retail %>% filter(Country == "United Kingdom")
+```
+
+```{r}
+# compute Total
+retail <- retail %>%
+  mutate(Total = Quantity * Price)
+```
+
+```{r}
+nums <- retail %>% select(Quantity, Price, Total)
+bad <- which(
+  rowSums(is.na(nums)) > 0 |
+  rowSums(nums == 0, na.rm = TRUE) > 0 |
+  rowSums(nums < 0,  na.rm = TRUE) > 0
+)
+bad
+```
+```{r}
+head(retail)
+```
+
+```{r}
+# build baskets - one of each item per invoice
+basket_df <- retail %>%
+  filter(!is.na(StockCode)) %>%
+  distinct(Invoice, StockCode)
+
+baskets <- split(basket_df$StockCode, basket_df$Invoice)
+tx <- as(baskets, "transactions")              # sparse basket matrix
+
+# --- Apriori with your thresholds ---
+rules <- apriori(
+  tx,
+  parameter = list(supp = 0.002, conf = 0.4, minlen = 2, target = "rules")
+)
+
+# keep lift >= 1.2
+rules <- subset(rules, quality(rules)$lift >= 1.2)
+
+# --- export only requested columns ---
+out <- tibble(
+  antecedent = labels(lhs(rules)),
+  consequent = labels(rhs(rules)),
+  support    = quality(rules)$support,
+  confidence = quality(rules)$confidence,
+  lift       = quality(rules)$lift
+)
+
+arrow::write_parquet(out, "rules.parquet")
+
+# (optional) peek at top rules by lift
+out %>% arrange(desc(lift)) %>% head(10)
+```
+
