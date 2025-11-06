@@ -4,8 +4,13 @@ output: html_notebook
 ---
 
 ```{r}
+# install.packages("arules")
+# install.packages("arrow")
+
 library(tidyverse)
 library(lubridate)
+library(arules)
+library(arrow)
 ```
 
 
@@ -112,5 +117,38 @@ arrow::write_parquet(out, "rules.parquet")
 
 # (optional) peek at top rules by lift
 out %>% arrange(desc(lift)) %>% head(10)
+```
+```{r}
+pairs <- eclat(tx, parameter = list(supp = 0.002, minlen = 2, maxlen = 2))
+inspect(head(sort(pairs, by = "support"), 10))
+```
+
+```{r}
+# 1) One best description per StockCode -> named vector
+map_desc <- retail %>%
+  filter(!is.na(StockCode), !is.na(Description)) %>%
+  count(StockCode, Description, sort = TRUE) %>%
+  group_by(StockCode) %>% slice_max(n, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  { setNames(.$Description, .$StockCode) }
+
+# 2) Build unique, human-readable item labels: "CODE | Description"
+basket_df <- retail %>%
+  filter(!is.na(StockCode)) %>%
+  mutate(desc = map_desc[StockCode],
+         item = if_else(is.na(desc), StockCode, paste0(StockCode, " | ", desc))) %>%
+  distinct(Invoice, item)
+
+# 3) Baskets -> transactions
+baskets <- split(basket_df$item, basket_df$Invoice)
+tx <- as(baskets, "transactions")
+
+# 4) Frequent pairs (undirected “bought-together”)
+pairs <- eclat(tx, parameter = list(supp = 0.002, minlen = 2, maxlen = 2))
+
+# 5) See the top 10 pairs (now with names)
+inspect(head(sort(pairs, by = "support"), 10))
+
+
 ```
 
